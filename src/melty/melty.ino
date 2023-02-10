@@ -1,5 +1,6 @@
 #include <SimpleKalmanFilter.h>
 #include <Adafruit_LSM6DSO32.h>
+#include <TinyPICO.h>
 
 /*
  SimpleKalmanFilter(e_mea, e_est, q);
@@ -10,11 +11,12 @@
 
 SimpleKalmanFilter simpleKalmanFilter(.01, .01, 0.01);
 Adafruit_LSM6DSO32 dso32;
+TinyPICO tp = TinyPICO();
 int oldTime;
 float currentAngle;
 
 // Serial output refresh time
-const long SERIAL_REFRESH_TIME = 100;
+const long SERIAL_REFRESH_TIME = 10;
 long refresh_time;
 
 void setup() {
@@ -51,6 +53,7 @@ void setup() {
   }  
   oldTime = millis();
   currentAngle = 0;
+  tp.DotStar_SetPixelColor( 255, 0, 0 );
 }
 
 void loop() {
@@ -63,21 +66,26 @@ void loop() {
   float gyroz = gyro.gyro.z * RAD_TO_DEG;
   float elaspedS = (millis() - oldTime);
   
-
-  
-
   // calculate the estimated value with Kalman Filter
   float estimated_value = simpleKalmanFilter.updateEstimate(gyroz);
   float estimatedMS = estimated_value / 1000;
 
+  if(estimatedMS < .0005 && estimatedMS > -.0005) {
+    estimatedMS = 0;
+  }
+
+  
   float foo = estimatedMS * elaspedS;
   currentAngle = currentAngle + foo;
-  // Serial.print("Elasped: ");
-  // Serial.print(elaspedS);
-  // Serial.print(", foo: ");
-  //Serial.print(foo);
-  //Serial.print(", currentAngle: ");
-  //Serial.println(currentAngle);
+
+  if(currentAngle < 0)
+  {
+    currentAngle = currentAngle + 360;
+  }
+
+  if(currentAngle > 360) {
+    currentAngle = currentAngle - 360;
+  }
 
 
   oldTime = millis();
@@ -89,6 +97,13 @@ void loop() {
     Serial.print("deg,");
     Serial.print(estimatedMS,4);
     Serial.println("deg/ms");
+
+    if(currentAngle < 10 && currentAngle > -350) {
+      tp.DotStar_SetPixelColor( 0, 255, 0 );
+    }
+    else {
+      tp.DotStar_SetPixelColor( 255, 0, 0 );
+    }
     
     refresh_time = millis() + SERIAL_REFRESH_TIME;
   }
