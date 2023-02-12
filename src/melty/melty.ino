@@ -12,6 +12,7 @@
 #define ADJUSTMENT_FACTOR 3.1
 
 #define CONNECT_TO_WIFI false
+#define WRITE_TO_SERIAL false
 
 const uint16_t port = 9999;
 const char * host = "192.168.86.69";
@@ -39,26 +40,26 @@ void ConnectToWiFi()
  
   WiFi.mode(WIFI_STA);
   WiFi.begin(SECRET_SSID, SECRET_PASS);
-  Serial.print("Connecting to "); Serial.println(SECRET_SSID);
+  if(WRITE_TO_SERIAL) {  Serial.print("Connecting to "); Serial.println(SECRET_SSID); }
  
   uint8_t i = 0;
   while (WiFi.status() != WL_CONNECTED)
   {
-    Serial.print('.');
+    if(WRITE_TO_SERIAL) { Serial.print('.'); }
     delay(500);
  
     if ((++i % 16) == 0)
     {
-      Serial.println(F(" still trying to connect"));
+      if(WRITE_TO_SERIAL) { Serial.println(F(" still trying to connect")); }
     }
   }
  
-  Serial.print(F("Connected. My IP address is: "));
-  Serial.println(WiFi.localIP());
+  if(WRITE_TO_SERIAL) { Serial.print(F("Connected. My IP address is: ")); }
+  if(WRITE_TO_SERIAL) { Serial.println(WiFi.localIP()); }
 }
 
 void setup() {
-  Serial.begin(115200);
+  if(WRITE_TO_SERIAL) { Serial.begin(115200); }
 
   if(CONNECT_TO_WIFI)
   {
@@ -66,7 +67,7 @@ void setup() {
 
     if (!client.connect(host, port)) {
   
-          Serial.println("Connection to host failed");
+          if(WRITE_TO_SERIAL) { Serial.println("Connection to host failed"); }
   
           delay(1000);
           return;
@@ -76,16 +77,17 @@ void setup() {
   if(!accel.begin())
   {
     /* There was a problem detecting the ADXL375 ... check your connections */
-    Serial.println("Ooops, no ADXL375 detected ... Check your wiring!");
+    if(WRITE_TO_SERIAL) { Serial.println("Ooops, no ADXL375 detected ... Check your wiring!"); }
     while(1);
   }
 
   accel.setDataRate(ADXL343_DATARATE_800_HZ); 
   
-  accel.printSensorDetails();
+  if(WRITE_TO_SERIAL) { 
+    accel.printSensorDetails(); 
+    Serial.println("");
+  }
   
-  Serial.println("");
-
   oldTime = millis();
   currentAngle = 0;
   tp.DotStar_SetPixelColor( 255, 0, 0 );
