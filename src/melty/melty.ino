@@ -1,6 +1,18 @@
 #include <SimpleKalmanFilter.h>
-#include <Adafruit_LSM6DSO32.h>
+//#include <Adafruit_LSM6DSO32.h>
 #include <TinyPICO.h>
+#include <Adafruit_ADXL375.h>
+#include "WiFi.h" // ESP32 WiFi include
+#include "arduino_secrets.h"
+
+#define ADXL375_SCK 13
+#define ADXL375_MISO 12
+#define ADXL375_MOSI 11
+#define CHIP_OFFSET 50 
+#define ADJUSTMENT_FACTOR 3.1
+
+const uint16_t port = 9999;
+const char * host = "192.168.86.69";
 
 /*
  SimpleKalmanFilter(e_mea, e_est, q);
@@ -10,65 +22,93 @@
  */
 
 SimpleKalmanFilter simpleKalmanFilter(.01, .01, 0.01);
-Adafruit_LSM6DSO32 dso32;
+//Adafruit_LSM6DSO32 dso32;
+Adafruit_ADXL375 accel = Adafruit_ADXL375(12345);
 TinyPICO tp = TinyPICO();
 int oldTime;
 float currentAngle;
+WiFiClient client;
 
 // Serial output refresh time
 const long SERIAL_REFRESH_TIME = 10;
 long refresh_time;
 
-void setup() {
-  Serial.begin(115200);
-
-  if (!dso32.begin_I2C()) {
-    while (1) {
-      delay(10);
+void ConnectToWiFi()
+{
+ 
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(SECRET_SSID, SECRET_PASS);
+  Serial.print("Connecting to "); Serial.println(SECRET_SSID);
+ 
+  uint8_t i = 0;
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    Serial.print('.');
+    delay(500);
+ 
+    if ((++i % 16) == 0)
+    {
+      Serial.println(F(" still trying to connect"));
     }
   }
+ 
+  Serial.print(F("Connected. My IP address is: "));
+  Serial.println(WiFi.localIP());
+}
 
-  dso32.setAccelRange(LSM6DSO32_ACCEL_RANGE_8_G);
-  dso32.setGyroRange(LSM6DS_GYRO_RANGE_2000_DPS);
+void setup() {
+  Serial.begin(115200);
+  ConnectToWiFi();
 
-  Serial.print("Gyro range set to: ");
-  switch (dso32.getGyroRange()) {
-  case LSM6DS_GYRO_RANGE_125_DPS:
-    Serial.println("125 degrees/s");
-    break;
-  case LSM6DS_GYRO_RANGE_250_DPS:
-    Serial.println("250 degrees/s");
-    break;
-  case LSM6DS_GYRO_RANGE_500_DPS:
-    Serial.println("500 degrees/s");
-    break;
-  case LSM6DS_GYRO_RANGE_1000_DPS:
-    Serial.println("1000 degrees/s");
-    break;
-  case LSM6DS_GYRO_RANGE_2000_DPS:
-    Serial.println("2000 degrees/s");
-    break;
-  case ISM330DHCX_GYRO_RANGE_4000_DPS:
-    break; // unsupported range for the DSO32
-  }  
+  if (!client.connect(host, port)) {
+ 
+        Serial.println("Connection to host failed");
+ 
+        delay(1000);
+        return;
+    }
+
+  if(!accel.begin())
+  {
+    /* There was a problem detecting the ADXL375 ... check your connections */
+    Serial.println("Ooops, no ADXL375 detected ... Check your wiring!");
+    while(1);
+  }
+
+  accel.setDataRate(ADXL343_DATARATE_800_HZ); 
+  
+  accel.printSensorDetails();
+  
+  Serial.println("");
+
   oldTime = millis();
   currentAngle = 0;
   tp.DotStar_SetPixelColor( 255, 0, 0 );
 }
 
 void loop() {
+  //client.print("Hello from ESP32!");
+  sensors_event_t event;
+  accel.getEvent(&event);
 
-
-  sensors_event_t accel;
-  sensors_event_t gyro;
-  sensors_event_t temp;
-  dso32.getEvent(&accel, &gyro, &temp);  // read a reference value from A0 and map it from 0 to 100
-  float gyroz = gyro.gyro.z * RAD_TO_DEG;
   float elaspedS = (millis() - oldTime);
   
+  //Serial.println(event.acceleration.y);
   // calculate the estimated value with Kalman Filter
-  float estimated_value = simpleKalmanFilter.updateEstimate(gyroz);
-  float estimatedMS = estimated_value / 1000;
+  float estimated_value = simpleKalmanFilter.updateEstimate(event.acceleration.y);
+
+  int adjustmentFactor = 3;
+  double calculatedRPM = sqrt(estimated_value / ((CHIP_OFFSET) * 1.118)) * 100 * ADJUSTMENT_FACTOR;  
+
+  if(isnan(calculatedRPM))
+  {
+    calculatedRPM = 0;
+  }
+
+  // convert rpm to deg/sec
+  double degreesPerSecond = calculatedRPM * 360/60;
+
+  float estimatedMS = degreesPerSecond / 1000;
 
   if(estimatedMS < .0005 && estimatedMS > -.0005) {
     estimatedMS = 0;
@@ -87,19 +127,25 @@ void loop() {
     currentAngle = currentAngle - 360;
   }
 
+  client.print(currentAngle);
+  client.print("\t");
+  client.print(estimated_value);
+  client.print("\t");
+  client.print(calculatedRPM);
+  client.print("|");
 
   oldTime = millis();
 
   // send to Serial output every 100ms
   // use the Serial Ploter for a good visualization
   if (millis() > refresh_time) { 
-    Serial.print(currentAngle,4);
-    Serial.print("deg,");
-    Serial.print(estimatedMS,4);
-    Serial.println("deg/ms");
+    // Serial.print(currentAngle,4);
+    // Serial.print("deg,");
+    // Serial.print(estimatedMS,4);
+    // Serial.println("deg/ms");
 
     if(currentAngle < 10 && currentAngle > -350) {
-      tp.DotStar_SetPixelColor( 0, 255, 0 );
+      tp.DotStar_SetPixelColor( 0, 0, 255 );
     }
     else {
       tp.DotStar_SetPixelColor( 255, 0, 0 );
