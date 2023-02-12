@@ -11,6 +11,8 @@
 #define CHIP_OFFSET 50 
 #define ADJUSTMENT_FACTOR 3.1
 
+#define CONNECT_TO_WIFI false
+
 const uint16_t port = 9999;
 const char * host = "192.168.86.69";
 
@@ -22,7 +24,6 @@ const char * host = "192.168.86.69";
  */
 
 SimpleKalmanFilter simpleKalmanFilter(.01, .01, 0.01);
-//Adafruit_LSM6DSO32 dso32;
 Adafruit_ADXL375 accel = Adafruit_ADXL375(12345);
 TinyPICO tp = TinyPICO();
 int oldTime;
@@ -58,14 +59,18 @@ void ConnectToWiFi()
 
 void setup() {
   Serial.begin(115200);
-  ConnectToWiFi();
 
-  if (!client.connect(host, port)) {
- 
-        Serial.println("Connection to host failed");
- 
-        delay(1000);
-        return;
+  if(CONNECT_TO_WIFI)
+  {
+    ConnectToWiFi();
+
+    if (!client.connect(host, port)) {
+  
+          Serial.println("Connection to host failed");
+  
+          delay(1000);
+          return;
+      }
     }
 
   if(!accel.begin())
@@ -86,14 +91,12 @@ void setup() {
   tp.DotStar_SetPixelColor( 255, 0, 0 );
 }
 
-void loop() {
-  //client.print("Hello from ESP32!");
+void loop() {  
   sensors_event_t event;
   accel.getEvent(&event);
 
   float elaspedS = (millis() - oldTime);
   
-  //Serial.println(event.acceleration.y);
   // calculate the estimated value with Kalman Filter
   float estimated_value = simpleKalmanFilter.updateEstimate(event.acceleration.y);
 
@@ -113,7 +116,6 @@ void loop() {
   if(estimatedMS < .0005 && estimatedMS > -.0005) {
     estimatedMS = 0;
   }
-
   
   float foo = estimatedMS * elaspedS;
   currentAngle = currentAngle + foo;
@@ -127,31 +129,24 @@ void loop() {
     currentAngle = currentAngle - 360;
   }
 
-  client.print(currentAngle);
-  client.print("\t");
-  client.print(estimated_value);
-  client.print("\t");
-  client.print(calculatedRPM);
-  client.print("|");
+  if(CONNECT_TO_WIFI)
+  {
+    client.print(currentAngle);
+    client.print("\t");
+    client.print(estimated_value);
+    client.print("\t");
+    client.print(calculatedRPM);
+    client.print("|");
+  }  
 
   oldTime = millis();
 
-  // send to Serial output every 100ms
-  // use the Serial Ploter for a good visualization
-  if (millis() > refresh_time) { 
-    // Serial.print(currentAngle,4);
-    // Serial.print("deg,");
-    // Serial.print(estimatedMS,4);
-    // Serial.println("deg/ms");
-
-    if(currentAngle < 10 && currentAngle > -350) {
-      tp.DotStar_SetPixelColor( 0, 0, 255 );
-    }
-    else {
-      tp.DotStar_SetPixelColor( 255, 0, 0 );
-    }
-    
-    refresh_time = millis() + SERIAL_REFRESH_TIME;
+  if(currentAngle < 10 && currentAngle > -350) 
+  {
+    tp.DotStar_SetPixelColor( 0, 255, 255 );
   }
-
+  else 
+  {
+    tp.DotStar_SetPixelColor( 255, 0, 0 );
+  }
 }
