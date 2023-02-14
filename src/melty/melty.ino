@@ -9,9 +9,9 @@
 #define ADXL375_MISO 12
 #define ADXL375_MOSI 11
 #define CHIP_OFFSET 50 
-#define ADJUSTMENT_FACTOR 3.1
+#define ADJUSTMENT_FACTOR 3.2
 
-#define CONNECT_TO_WIFI true
+#define CONNECT_TO_WIFI false
 #define WRITE_TO_SERIAL false
 
 const uint16_t port = 9999;
@@ -115,16 +115,16 @@ void calcuateBySpeed(float rotationSpeed) {
     nextRotation = nextRotation + timeToRotate; // bump target by current revolution time    
   }
 
-  // if(CONNECT_TO_WIFI) {
-  //     client.print(currentTime);
-  //     client.print("\t");
-  //     client.print(nextRotation);
-  //     client.print("\t");
-  //     client.print(rotationSpeed);
-  //     client.print("\t");
-  //     client.print(timeToRotate);
-  //     client.print("|");
-  //   }  
+  if(CONNECT_TO_WIFI) {
+      client.print(currentTime);
+      client.print("\t");
+      client.print(nextRotation);
+      client.print("\t");
+      client.print(rotationSpeed);
+      client.print("\t");
+      client.print(timeToRotate);
+      client.print("|");
+    }  
 
   // light the led if we're close to the rotation mark
   if(abs(currentTime-nextRotation) < 10) {
@@ -155,19 +155,31 @@ float currentRotationSpeed() {
   
   // calculate the estimated value with Kalman Filter
   float estimated_value = simpleKalmanFilter.updateEstimate(event.acceleration.y);
+  //float estimated_value = event.acceleration.y;
 
   int adjustmentFactor = 3;
   double calculatedRPM = sqrt(estimated_value / ((CHIP_OFFSET) * 1.118)) * 100 * ADJUSTMENT_FACTOR;  
 
-  if(isnan(calculatedRPM))
-  {
+  if(isnan(calculatedRPM)) {
     calculatedRPM = 0;
   }
 
   // convert rpm to deg/sec
-  double degreesPerSecond = calculatedRPM * 360/60;
+  float degreesPerSecond = calculatedRPM * 360/60;
+  float degreesPerMS = degreesPerSecond / 1000;// return as degress per millisecond
 
-  return degreesPerSecond / 1000;// return as degress per millisecond
+  if(CONNECT_TO_WIFI) {
+    if(calculatedRPM > 150) {
+      client.print(calculatedRPM);
+      client.print("\t");
+      client.print(degreesPerSecond);
+      client.print("\t");
+      client.print(degreesPerMS);
+      client.print("|");
+    }
+  }
+
+  return degreesPerMS;
 }
 
 void calculateByPosition(float rotationSpeed, float elasped) {
