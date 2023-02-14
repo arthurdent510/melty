@@ -24,7 +24,8 @@ int oldTime;
 float currentAngle;
 WiFiClient client;
 float nextRotation;
-//int lastRotation;
+long lastRotation;
+long lastLed;
 
 // Serial output refresh time
 const long SERIAL_REFRESH_TIME = 10;
@@ -86,7 +87,8 @@ void setup() {
   oldTime = millis();
   currentAngle = 0;
   nextRotation = millis();
-  //lastRotation = millis();
+  lastLed - millis();
+  lastRotation = millis();
   tp.DotStar_SetPixelColor( 255, 0, 0 );
 }
 
@@ -107,22 +109,40 @@ void calcuateBySpeed(float rotationSpeed) {
   }
 
   // check if we've hit our rotation mark
-  int currentTime = millis();
+  long currentTime = millis();
   if(currentTime >= nextRotation) {
     // update next rotate based on current rpm
     nextRotation = nextRotation + timeToRotate; // bump target by current revolution time    
   }
 
-  if(CONNECT_TO_WIFI) {
-      client.print(currentTime);
-      client.print("\t");
-      client.print(nextRotation);
-      client.print("|");
-    }  
+  // if(CONNECT_TO_WIFI) {
+  //     client.print(currentTime);
+  //     client.print("\t");
+  //     client.print(nextRotation);
+  //     client.print("\t");
+  //     client.print(rotationSpeed);
+  //     client.print("\t");
+  //     client.print(timeToRotate);
+  //     client.print("|");
+  //   }  
 
   // light the led if we're close to the rotation mark
   if(abs(currentTime-nextRotation) < 10) {
     tp.DotStar_SetPixelColor( 0, 255, 255 );
+    if(CONNECT_TO_WIFI) {
+      client.print("Lighting led");
+      client.print("\t");
+      client.print(currentTime);
+      client.print("\t");
+      client.print(lastLed);
+      client.print("\t");
+      client.print(timeToRotate);
+      client.print("\t");
+      client.print(nextRotation);
+      client.print("|");
+
+      lastLed = currentTime;
+    }
   }
   else {
     tp.DotStar_SetPixelColor( 0, 0, 0 );
@@ -147,7 +167,7 @@ float currentRotationSpeed() {
   // convert rpm to deg/sec
   double degreesPerSecond = calculatedRPM * 360/60;
 
-  return degreesPerSecond / 1000;
+  return degreesPerSecond / 1000;// return as degress per millisecond
 }
 
 void calculateByPosition(float rotationSpeed, float elasped) {
