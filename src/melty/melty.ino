@@ -11,18 +11,11 @@
 #define CHIP_OFFSET 50 
 #define ADJUSTMENT_FACTOR 3.1
 
-#define CONNECT_TO_WIFI false
+#define CONNECT_TO_WIFI true
 #define WRITE_TO_SERIAL false
 
 const uint16_t port = 9999;
 const char * host = "192.168.86.69";
-
-/*
- SimpleKalmanFilter(e_mea, e_est, q);
- e_mea: Measurement Uncertainty 
- e_est: Estimation Uncertainty 
- q: Process Noise
- */
 
 SimpleKalmanFilter simpleKalmanFilter(.01, .01, 0.01);
 Adafruit_ADXL375 accel = Adafruit_ADXL375(12345);
@@ -30,6 +23,8 @@ TinyPICO tp = TinyPICO();
 int oldTime;
 float currentAngle;
 WiFiClient client;
+float nextRotation;
+//int lastRotation;
 
 // Serial output refresh time
 const long SERIAL_REFRESH_TIME = 10;
@@ -90,14 +85,53 @@ void setup() {
   
   oldTime = millis();
   currentAngle = 0;
+  nextRotation = millis();
+  //lastRotation = millis();
   tp.DotStar_SetPixelColor( 255, 0, 0 );
 }
 
 void loop() {  
+  float rotateSpeed = currentRotationSpeed();
+  //float elasped = (millis() - oldTime);
+
+  if(rotateSpeed > 1) {
+    calcuateBySpeed(rotateSpeed); 
+  }
+}
+
+void calcuateBySpeed(float rotationSpeed) {
+  // calculate how long it'll take to do one rotation
+  float timeToRotate = 0;
+  if(rotationSpeed != 0) {
+    timeToRotate = 360/rotationSpeed; // this takes X deg/ms and figures out how many ms it takes to do 360degs
+  }
+
+  // check if we've hit our rotation mark
+  int currentTime = millis();
+  if(currentTime >= nextRotation) {
+    // update next rotate based on current rpm
+    nextRotation = nextRotation + timeToRotate; // bump target by current revolution time    
+  }
+
+  if(CONNECT_TO_WIFI) {
+      client.print(currentTime);
+      client.print("\t");
+      client.print(nextRotation);
+      client.print("|");
+    }  
+
+  // light the led if we're close to the rotation mark
+  if(abs(currentTime-nextRotation) < 10) {
+    tp.DotStar_SetPixelColor( 0, 255, 255 );
+  }
+  else {
+    tp.DotStar_SetPixelColor( 0, 0, 0 );
+  }
+}
+
+float currentRotationSpeed() {
   sensors_event_t event;
   accel.getEvent(&event);
-
-  float elaspedS = (millis() - oldTime);
   
   // calculate the estimated value with Kalman Filter
   float estimated_value = simpleKalmanFilter.updateEstimate(event.acceleration.y);
@@ -113,14 +147,12 @@ void loop() {
   // convert rpm to deg/sec
   double degreesPerSecond = calculatedRPM * 360/60;
 
-  float estimatedMS = degreesPerSecond / 1000;
+  return degreesPerSecond / 1000;
+}
 
-  if(estimatedMS < .0005 && estimatedMS > -.0005) {
-    estimatedMS = 0;
-  }
-  
-  float foo = estimatedMS * elaspedS;
-  currentAngle = currentAngle + foo;
+void calculateByPosition(float rotationSpeed, float elasped) {
+  float degreesMoved = rotationSpeed * elasped;
+  currentAngle = currentAngle + degreesMoved;
 
   if(currentAngle < 0)
   {
@@ -135,9 +167,9 @@ void loop() {
   {
     client.print(currentAngle);
     client.print("\t");
-    client.print(estimated_value);
-    client.print("\t");
-    client.print(calculatedRPM);
+    // client.print(estimated_value);
+    // client.print("\t");
+    client.print(rotationSpeed);
     client.print("|");
   }  
 
