@@ -38,6 +38,7 @@ Servo yEsc;
 int x = 90;
 int y = 90;
 int spinney = 0;
+int failSafeTimeout = 1000;
 
 
 // Serial output refresh time
@@ -94,14 +95,6 @@ void loop() {
 }
 
 void updateMotors() {
-  if(lastUpdate + updateEveryMS < millis()) {
-    if(SerialBT.connected()) {
-      SerialBT.write(lastUpdate);
-    }
-
-    lastUpdate = millis();
-  }
-
   if(lastCommand+failSafeTimeout < millis()) {
     // stop the bot if we haven't gotten a command in a while, something probably blew up and we need to stop
     x = 90;
@@ -169,35 +162,9 @@ void calcuateBySpeed(float rotationSpeed) {
     // update next rotate based on current rpm
     nextRotation = nextRotation + timeToRotate; // bump target by current revolution time    
   }
-
-  if(CONNECT_TO_WIFI) {
-      client.print(currentTime);
-      client.print("\t");
-      client.print(nextRotation);
-      client.print("\t");
-      client.print(rotationSpeed);
-      client.print("\t");
-      client.print(timeToRotate);
-      client.print("|");
-    }  
-
   // light the led if we're close to the rotation mark
   if(abs(currentTime-nextRotation) < 10) {
     tp.DotStar_SetPixelColor( 0, 255, 255 );
-    if(CONNECT_TO_WIFI) {
-      client.print("Lighting led");
-      client.print("\t");
-      client.print(currentTime);
-      client.print("\t");
-      client.print(lastLed);
-      client.print("\t");
-      client.print(timeToRotate);
-      client.print("\t");
-      client.print(nextRotation);
-      client.print("|");
-
-      lastLed = currentTime;
-    }
   }
   else {
     tp.DotStar_SetPixelColor( 0, 0, 0 );
@@ -223,17 +190,6 @@ float currentRotationSpeed() {
   float degreesPerSecond = calculatedRPM * 360/60;
   float degreesPerMS = degreesPerSecond / 1000;// return as degress per millisecond
 
-  if(CONNECT_TO_WIFI) {
-    if(calculatedRPM > 150) {
-      client.print(calculatedRPM);
-      client.print("\t");
-      client.print(degreesPerSecond);
-      client.print("\t");
-      client.print(degreesPerMS);
-      client.print("|");
-    }
-  }
-
   return degreesPerMS;
 }
 
@@ -249,16 +205,6 @@ void calculateByPosition(float rotationSpeed, float elasped) {
   if(currentAngle > 360) {
     currentAngle = currentAngle - 360;
   }
-
-  if(CONNECT_TO_WIFI)
-  {
-    client.print(currentAngle);
-    client.print("\t");
-    // client.print(estimated_value);
-    // client.print("\t");
-    client.print(rotationSpeed);
-    client.print("|");
-  }  
 
   oldTime = millis();
 
