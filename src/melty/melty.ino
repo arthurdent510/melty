@@ -1,15 +1,19 @@
 #include <SimpleKalmanFilter.h>
-//#include <Adafruit_LSM6DSO32.h>
 #include <TinyPICO.h>
 #include <Adafruit_ADXL375.h>
-#include "WiFi.h" // ESP32 WiFi include
+#include <ESP32Servo.h>
+#include <BluetoothSerial.h>
+#include <ArduinoJson.h>
 #include "arduino_secrets.h"
+
 
 #define ADXL375_SCK 13
 #define ADXL375_MISO 12
 #define ADXL375_MOSI 11
 #define CHIP_OFFSET 50 
 #define ADJUSTMENT_FACTOR 3.2
+#define X_MOTOR_PIN 14
+#define Y_MOTOR_PIN 15
 
 #define CONNECT_TO_WIFI false
 #define WRITE_TO_SERIAL false
@@ -22,53 +26,28 @@ Adafruit_ADXL375 accel = Adafruit_ADXL375(12345);
 TinyPICO tp = TinyPICO();
 int oldTime;
 float currentAngle;
-WiFiClient client;
 float nextRotation;
 long lastRotation;
 long lastLed;
+BluetoothSerial SerialBT;
+long lastCommand;
+String command;
+StaticJsonDocument<200> doc;
+Servo xEsc;
+Servo yEsc;
+int x = 90;
+int y = 90;
+int spinney = 0;
+
 
 // Serial output refresh time
 const long SERIAL_REFRESH_TIME = 10;
 long refresh_time;
 
-void ConnectToWiFi()
-{
- 
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(SECRET_SSID, SECRET_PASS);
-  if(WRITE_TO_SERIAL) {  Serial.print("Connecting to "); Serial.println(SECRET_SSID); }
- 
-  uint8_t i = 0;
-  while (WiFi.status() != WL_CONNECTED)
-  {
-    if(WRITE_TO_SERIAL) { Serial.print('.'); }
-    delay(500);
- 
-    if ((++i % 16) == 0)
-    {
-      if(WRITE_TO_SERIAL) { Serial.println(F(" still trying to connect")); }
-    }
-  }
- 
-  if(WRITE_TO_SERIAL) { Serial.print(F("Connected. My IP address is: ")); }
-  if(WRITE_TO_SERIAL) { Serial.println(WiFi.localIP()); }
-}
-
 void setup() {
+  SerialBT.begin("PGGB");
+  
   if(WRITE_TO_SERIAL) { Serial.begin(115200); }
-
-  if(CONNECT_TO_WIFI)
-  {
-    ConnectToWiFi();
-
-    if (!client.connect(host, port)) {
-  
-          if(WRITE_TO_SERIAL) { Serial.println("Connection to host failed"); }
-  
-          delay(1000);
-          return;
-      }
-    }
 
   if(!accel.begin())
   {
@@ -90,14 +69,90 @@ void setup() {
   lastLed - millis();
   lastRotation = millis();
   tp.DotStar_SetPixelColor( 255, 0, 0 );
+
+  xEsc.attach(X_MOTOR_PIN, 1000,2000);
+  yEsc.attach(Y_MOTOR_PIN, 1000,2000);
+
+  xEsc.write(90);
+  yEsc.write(90);
+  delay(500);
 }
 
 void loop() {  
+  getCommand();  
+
   float rotateSpeed = currentRotationSpeed();
   //float elasped = (millis() - oldTime);
 
   if(rotateSpeed > 1) {
     calcuateBySpeed(rotateSpeed); 
+  }
+
+  // do translation stuff?
+
+  updateMotors();
+}
+
+void updateMotors() {
+  if(lastUpdate + updateEveryMS < millis()) {
+    if(SerialBT.connected()) {
+      SerialBT.write(lastUpdate);
+    }
+
+    lastUpdate = millis();
+  }
+
+  if(lastCommand+failSafeTimeout < millis()) {
+    // stop the bot if we haven't gotten a command in a while, something probably blew up and we need to stop
+    x = 90;
+    y = 90;
+    spinney = 0;
+    
+    if(WRITE_TO_SERIAL) { 
+      Serial.println("hit failsafe");
+    }
+  }
+
+  if(WRITE_TO_SERIAL) { 
+    Serial.print(x);
+    Serial.print(":");
+    Serial.println(y);
+  }
+
+  xEsc.write(x);
+  yEsc.write(y);
+}
+
+void getCommand() {
+  while(SerialBT.available()){
+    command = SerialBT.readStringUntil('}');
+    command.concat("}");
+
+    DeserializationError error = deserializeJson(doc, command);
+
+    // Test if parsing succeeds.
+    if (error) {
+      Serial.print(F("deserializeJson() failed: "));
+      Serial.println(error.f_str());
+      
+      return;
+    }
+
+    x = doc["X"];
+    y = doc["Y"];
+    spinney = doc["Spinney"];
+
+    if(WRITE_TO_SERIAL) {
+      Serial.print("x:");
+      Serial.print(x);
+      Serial.print(", y:");
+      Serial.print(y);
+      Serial.print(", spinney:");
+      Serial.println(spinney);
+    }
+
+    command = "";
+    lastCommand = millis();
   }
 }
 
