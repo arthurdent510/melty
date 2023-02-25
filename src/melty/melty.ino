@@ -6,69 +6,42 @@
 #include <ArduinoJson.h>
 #include "arduino_secrets.h"
 
-
-#define ADXL375_SCK 13
-#define ADXL375_MISO 12
-#define ADXL375_MOSI 11
 #define CHIP_OFFSET 50 
 #define ADJUSTMENT_FACTOR 3.2
 #define X_MOTOR_PIN 14
 #define Y_MOTOR_PIN 15
-
-#define CONNECT_TO_WIFI false
 #define WRITE_TO_SERIAL false
 
-const uint16_t port = 9999;
-const char * host = "192.168.86.69";
+TaskHandle_t currentRotationTaskHandler;
+TaskHandle_t ledTaskHandler;
+TaskHandle_t calculateRotationSpeedHandler;
 
 SimpleKalmanFilter simpleKalmanFilter(.01, .01, 0.01);
-Adafruit_ADXL375 accel = Adafruit_ADXL375(12345);
+
 TinyPICO tp = TinyPICO();
-int oldTime;
-float currentAngle;
-float nextRotation;
-long lastRotation;
-long lastLed;
 BluetoothSerial SerialBT;
+
+Servo xEsc;
+Servo yEsc;
+
+float nextRotation;
 long lastCommand;
 String command;
 StaticJsonDocument<200> doc;
-Servo xEsc;
-Servo yEsc;
+
 int x = 90;
 int y = 90;
 int spinney = 0;
 int failSafeTimeout = 1000;
-
-
-// Serial output refresh time
-const long SERIAL_REFRESH_TIME = 10;
-long refresh_time;
+float currentRotationSpeed = 0;
 
 void setup() {
   SerialBT.begin("PGGB");
+  Serial.begin(115200);
   
-  if(WRITE_TO_SERIAL) { Serial.begin(115200); }
-
-  if(!accel.begin())
-  {
-    /* There was a problem detecting the ADXL375 ... check your connections */
-    if(WRITE_TO_SERIAL) { Serial.println("Ooops, no ADXL375 detected ... Check your wiring!"); }
-    while(1);
-  }
-
-  accel.setDataRate(ADXL343_DATARATE_800_HZ); 
+  if(WRITE_TO_SERIAL) { Serial.begin(115200); }  
   
-  if(WRITE_TO_SERIAL) { 
-    accel.printSensorDetails(); 
-    Serial.println("");
-  }
-  
-  oldTime = millis();
-  currentAngle = 0;
   nextRotation = millis();
-  lastLed - millis();
-  lastRotation = millis();
   tp.DotStar_SetPixelColor( 255, 0, 0 );
 
   xEsc.attach(X_MOTOR_PIN, 1000,2000);
@@ -77,17 +50,37 @@ void setup() {
   xEsc.write(90);
   yEsc.write(90);
   delay(500);
+
+  xTaskCreatePinnedToCore(
+                    currentRotationTaskHandlerCode,   /* Task function. */
+                    "currentRotationTaskHandler",     /* name of task. */
+                    10000,       /* Stack size of task */
+                    NULL,        /* parameter of the task */
+                    1,           /* priority of the task */
+                    &currentRotationTaskHandler,      /* Task handle to keep track of created task */
+                    0);          /* pin task to core 0 */ 
+
+  xTaskCreatePinnedToCore(
+                    ledTaskHandlerCode,   /* Task function. */
+                    "ledTaskHandler",     /* name of task. */
+                    10000,       /* Stack size of task */
+                    NULL,        /* parameter of the task */
+                    1,           /* priority of the task */
+                    &ledTaskHandler,      /* Task handle to keep track of created task */
+                    1);          /* pin task to core 1 */
+
+  xTaskCreatePinnedToCore(
+                    calcuateBySpeed,   /* Task function. */
+                    "calculateRotationSpeed",     /* name of task. */
+                    10000,       /* Stack size of task */
+                    NULL,        /* parameter of the task */
+                    0,           /* priority of the task */
+                    &calculateRotationSpeedHandler,      /* Task handle to keep track of created task */
+                    1);          /* pin task to core 1 */
 }
 
 void loop() {  
   getCommand();  
-
-  float rotateSpeed = currentRotationSpeed();
-  //float elasped = (millis() - oldTime);
-
-  if(rotateSpeed > 1) {
-    calcuateBySpeed(rotateSpeed); 
-  }
 
   // do translation stuff?
 
@@ -149,71 +142,80 @@ void getCommand() {
   }
 }
 
-void calcuateBySpeed(float rotationSpeed) {
-  // calculate how long it'll take to do one rotation
-  float timeToRotate = 0;
-  if(rotationSpeed != 0) {
-    timeToRotate = 360/rotationSpeed; // this takes X deg/ms and figures out how many ms it takes to do 360degs
-  }
+void calcuateBySpeed(void * pvParameters) {
+  for(;;) {    
+    // calculate how long it'll take to do one rotation
+    float timeToRotate = 0;
+    if(currentRotationSpeed != 0) {
+      timeToRotate = 360/currentRotationSpeed; // this takes X deg/ms and figures out how many ms it takes to do 360degs
+    }
 
-  // check if we've hit our rotation mark
-  long currentTime = millis();
-  if(currentTime >= nextRotation) {
-    // update next rotate based on current rpm
-    nextRotation = nextRotation + timeToRotate; // bump target by current revolution time    
-  }
-  // light the led if we're close to the rotation mark
-  if(abs(currentTime-nextRotation) < 10) {
-    tp.DotStar_SetPixelColor( 0, 255, 255 );
-  }
-  else {
-    tp.DotStar_SetPixelColor( 0, 0, 0 );
+    // check if we've hit our rotation mark
+    long currentTime = millis();
+    if(currentTime >= nextRotation) {
+      // update next rotate based on current rpm
+      nextRotation = nextRotation + timeToRotate; // bump target by current revolution time    
+    }
   }
 }
 
-float currentRotationSpeed() {
-  sensors_event_t event;
-  accel.getEvent(&event);
+void currentRotationTaskHandlerCode(void * pvParameters) {
+  Adafruit_ADXL375 accel = Adafruit_ADXL375(12345);
+
+  if(!accel.begin())
+  {
+    /* There was a problem detecting the ADXL375 ... check your connections */
+    if(WRITE_TO_SERIAL) { Serial.println("Ooops, no ADXL375 detected ... Check your wiring!"); }
+    while(1);
+  }
+
+  accel.setDataRate(ADXL343_DATARATE_800_HZ); 
   
-  // calculate the estimated value with Kalman Filter
-  float estimated_value = simpleKalmanFilter.updateEstimate(event.acceleration.y);
-  //float estimated_value = event.acceleration.y;
-
-  int adjustmentFactor = 3;
-  double calculatedRPM = sqrt(estimated_value / ((CHIP_OFFSET) * 1.118)) * 100 * ADJUSTMENT_FACTOR;  
-
-  if(isnan(calculatedRPM)) {
-    calculatedRPM = 0;
+  if(WRITE_TO_SERIAL) { 
+    accel.printSensorDetails(); 
+    Serial.println("");
   }
 
-  // convert rpm to deg/sec
-  float degreesPerSecond = calculatedRPM * 360/60;
-  float degreesPerMS = degreesPerSecond / 1000;// return as degress per millisecond
+  for(;;) {
+    sensors_event_t event;
+    accel.getEvent(&event);
+    
+    // calculate the estimated value with Kalman Filter
+    float estimated_value = simpleKalmanFilter.updateEstimate(event.acceleration.y);
 
-  return degreesPerMS;
+    int adjustmentFactor = 3;
+    double calculatedRPM = sqrt(estimated_value / ((CHIP_OFFSET) * 1.118)) * 100 * ADJUSTMENT_FACTOR;  
+
+    Serial.println(calculatedRPM);
+    bluetoothPrintLine(String(calculatedRPM, 3));  
+
+    if(isnan(calculatedRPM)) {
+      calculatedRPM = 0;
+    }
+
+    // convert rpm to deg/sec
+    float degreesPerSecond = calculatedRPM * 360/60;
+    currentRotationSpeed = degreesPerSecond / 1000;// return as degress per millisecond  
+  }
 }
 
-void calculateByPosition(float rotationSpeed, float elasped) {
-  float degreesMoved = rotationSpeed * elasped;
-  currentAngle = currentAngle + degreesMoved;
-
-  if(currentAngle < 0)
-  {
-    currentAngle = currentAngle + 360;
+void ledTaskHandlerCode(void * pvParameters) {
+  for(;;) {
+    if(abs(millis()-nextRotation) < 10) {
+      tp.DotStar_SetPixelColor( 0, 255, 255 );
+    }
+    else {
+      tp.DotStar_SetPixelColor( 0, 0, 0 );
+    }
   }
+}
 
-  if(currentAngle > 360) {
-    currentAngle = currentAngle - 360;
-  }
-
-  oldTime = millis();
-
-  if(currentAngle < 10 && currentAngle > -350) 
-  {
-    tp.DotStar_SetPixelColor( 0, 255, 255 );
-  }
-  else 
-  {
-    tp.DotStar_SetPixelColor( 255, 0, 0 );
-  }
+void bluetoothPrintLine(String line) {
+    unsigned l = line.length();
+    for(int i=0; i<l; i++)
+    {
+        if(line[i]!='\0')
+            SerialBT.write(byte(line[i]));
+    }
+    SerialBT.write(10); // \n
 }
