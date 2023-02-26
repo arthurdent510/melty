@@ -7,7 +7,7 @@
 #include "arduino_secrets.h"
 
 #define CHIP_OFFSET 50 
-#define ADJUSTMENT_FACTOR 3.2
+//#define ADJUSTMENT_FACTOR 4.08
 #define X_MOTOR_PIN 14
 #define Y_MOTOR_PIN 15
 #define WRITE_TO_SERIAL false
@@ -15,8 +15,8 @@
 TaskHandle_t currentRotationTaskHandler;
 TaskHandle_t ledTaskHandler;
 TaskHandle_t calculateRotationSpeedHandler;
-
-SimpleKalmanFilter simpleKalmanFilter(.01, .01, 0.01);
+TaskHandle_t getCommandHandler;
+TaskHandle_t updateMotorsHandler;
 
 TinyPICO tp = TinyPICO();
 BluetoothSerial SerialBT;
@@ -26,142 +26,27 @@ Servo yEsc;
 
 float nextRotation;
 long lastCommand;
-String command;
-StaticJsonDocument<200> doc;
+
 
 int x = 90;
 int y = 90;
 int spinney = 0;
 int failSafeTimeout = 1000;
 float currentRotationSpeed = 0;
+double  ADJUSTMENT_FACTOR = 3.19;
+
+Adafruit_ADXL375 accel = Adafruit_ADXL375(12345);
+SimpleKalmanFilter simpleKalmanFilter(.01, .01, 0.01);
+
+
+
+String command;
+StaticJsonDocument<200> doc;
 
 void setup() {
   SerialBT.begin("PGGB");
   Serial.begin(115200);
   
-  if(WRITE_TO_SERIAL) { Serial.begin(115200); }  
-  
-  nextRotation = millis();
-  tp.DotStar_SetPixelColor( 255, 0, 0 );
-
-  xEsc.attach(X_MOTOR_PIN, 1000,2000);
-  yEsc.attach(Y_MOTOR_PIN, 1000,2000);
-
-  xEsc.write(90);
-  yEsc.write(90);
-  delay(500);
-
-  xTaskCreatePinnedToCore(
-                    currentRotationTaskHandlerCode,   /* Task function. */
-                    "currentRotationTaskHandler",     /* name of task. */
-                    10000,       /* Stack size of task */
-                    NULL,        /* parameter of the task */
-                    1,           /* priority of the task */
-                    &currentRotationTaskHandler,      /* Task handle to keep track of created task */
-                    0);          /* pin task to core 0 */ 
-
-  xTaskCreatePinnedToCore(
-                    ledTaskHandlerCode,   /* Task function. */
-                    "ledTaskHandler",     /* name of task. */
-                    10000,       /* Stack size of task */
-                    NULL,        /* parameter of the task */
-                    1,           /* priority of the task */
-                    &ledTaskHandler,      /* Task handle to keep track of created task */
-                    1);          /* pin task to core 1 */
-
-  xTaskCreatePinnedToCore(
-                    calcuateBySpeed,   /* Task function. */
-                    "calculateRotationSpeed",     /* name of task. */
-                    10000,       /* Stack size of task */
-                    NULL,        /* parameter of the task */
-                    0,           /* priority of the task */
-                    &calculateRotationSpeedHandler,      /* Task handle to keep track of created task */
-                    1);          /* pin task to core 1 */
-}
-
-void loop() {  
-  getCommand();  
-
-  // do translation stuff?
-
-  updateMotors();
-}
-
-void updateMotors() {
-  if(lastCommand+failSafeTimeout < millis()) {
-    // stop the bot if we haven't gotten a command in a while, something probably blew up and we need to stop
-    x = 90;
-    y = 90;
-    spinney = 0;
-    
-    if(WRITE_TO_SERIAL) { 
-      Serial.println("hit failsafe");
-    }
-  }
-
-  if(WRITE_TO_SERIAL) { 
-    Serial.print(x);
-    Serial.print(":");
-    Serial.println(y);
-  }
-
-  xEsc.write(x);
-  yEsc.write(y);
-}
-
-void getCommand() {
-  while(SerialBT.available()){
-    command = SerialBT.readStringUntil('}');
-    command.concat("}");
-
-    DeserializationError error = deserializeJson(doc, command);
-
-    // Test if parsing succeeds.
-    if (error) {
-      Serial.print(F("deserializeJson() failed: "));
-      Serial.println(error.f_str());
-      
-      return;
-    }
-
-    x = doc["X"];
-    y = doc["Y"];
-    spinney = doc["Spinney"];
-
-    if(WRITE_TO_SERIAL) {
-      Serial.print("x:");
-      Serial.print(x);
-      Serial.print(", y:");
-      Serial.print(y);
-      Serial.print(", spinney:");
-      Serial.println(spinney);
-    }
-
-    command = "";
-    lastCommand = millis();
-  }
-}
-
-void calcuateBySpeed(void * pvParameters) {
-  for(;;) {    
-    // calculate how long it'll take to do one rotation
-    float timeToRotate = 0;
-    if(currentRotationSpeed != 0) {
-      timeToRotate = 360/currentRotationSpeed; // this takes X deg/ms and figures out how many ms it takes to do 360degs
-    }
-
-    // check if we've hit our rotation mark
-    long currentTime = millis();
-    if(currentTime >= nextRotation) {
-      // update next rotate based on current rpm
-      nextRotation = nextRotation + timeToRotate; // bump target by current revolution time    
-    }
-  }
-}
-
-void currentRotationTaskHandlerCode(void * pvParameters) {
-  Adafruit_ADXL375 accel = Adafruit_ADXL375(12345);
-
   if(!accel.begin())
   {
     /* There was a problem detecting the ADXL375 ... check your connections */
@@ -170,13 +55,209 @@ void currentRotationTaskHandlerCode(void * pvParameters) {
   }
 
   accel.setDataRate(ADXL343_DATARATE_800_HZ); 
-  
+
   if(WRITE_TO_SERIAL) { 
     accel.printSensorDetails(); 
     Serial.println("");
   }
+  
+  if(WRITE_TO_SERIAL) { Serial.begin(115200); }  
+  
+  nextRotation = millis();
+  tp.DotStar_SetPixelColor( 255, 0, 0 );
 
-  for(;;) {
+  //Serial.println("init motors");  
+
+  xEsc.attach(X_MOTOR_PIN, 1000,2000);
+  yEsc.attach(Y_MOTOR_PIN, 1000,2000);
+
+  xEsc.write(90);
+  yEsc.write(90);
+  delay(500);  
+
+  //Serial.println("done with motor init");
+
+  xTaskCreatePinnedToCore(
+                    currentRotationTaskHandlerCode,   /* Task function. */
+                    "currentRotationTaskHandler",     /* name of task. */
+                    10000,       /* Stack size of task */
+                    NULL,        /* parameter of the task */
+                    2,           /* priority of the task */
+                    &currentRotationTaskHandler,      /* Task handle to keep track of created task */
+                    0);          /* pin task to core 0 */ 
+
+  delay(500);
+
+  xTaskCreatePinnedToCore(
+                    getCommandCode,   /* Task function. */
+                    "getCommand",     /* name of task. */
+                    10000,       /* Stack size of task */
+                    NULL,        /* parameter of the task */
+                    3,           /* priority of the task */
+                    &getCommandHandler,      /* Task handle to keep track of created task */
+                    1);          /* pin task to core 1 */
+
+  delay(500);
+
+  xTaskCreatePinnedToCore(
+                    ledTaskHandlerCode,   /* Task function. */
+                    "ledTaskHandler",     /* name of task. */
+                    10000,       /* Stack size of task */
+                    NULL,        /* parameter of the task */
+                    3,           /* priority of the task */
+                    &ledTaskHandler,      /* Task handle to keep track of created task */
+                    0);          /* pin task to core 1 */
+
+  delay(500);
+
+  xTaskCreatePinnedToCore(
+                    calcuateBySpeed,   /* Task function. */
+                    "calculateRotationSpeed",     /* name of task. */
+                    10000,       /* Stack size of task */
+                    NULL,        /* parameter of the task */
+                    2,           /* priority of the task */
+                    &calculateRotationSpeedHandler,      /* Task handle to keep track of created task */
+                    0);          /* pin task to core 1 */
+
+  delay(500);
+
+  xTaskCreatePinnedToCore(
+                    updateMotorsCode,   /* Task function. */
+                    "updateMotors",     /* name of task. */
+                    10000,       /* Stack size of task */
+                    NULL,        /* parameter of the task */
+                    2,           /* priority of the task */
+                    &updateMotorsHandler,      /* Task handle to keep track of created task */
+                    1);          /* pin task to core 1 */
+  
+  delay(500);
+
+  //Serial.println("done with setup function");
+}
+
+void loop() {   
+  while (true){}
+}
+
+void updateMotorsCode(void * pvParameters) {
+  //Serial.println("bar");
+  while(true) {
+    //Serial.println("foo");
+    
+    if(lastCommand+failSafeTimeout < millis()) {
+      // stop the bot if we haven't gotten a command in a while, something probably blew up and we need to stop
+      x = 90;
+      y = 90;
+      spinney = 0;
+      
+      if(WRITE_TO_SERIAL) { 
+        Serial.println("hit failsafe");
+      }
+    }
+
+    if(WRITE_TO_SERIAL) { 
+      Serial.print(x);
+      Serial.print(":");
+      Serial.println(y);
+    }
+
+    String foo = "motors:";
+    foo.concat(x);
+    foo.concat(":");
+    foo.concat(y);
+
+    //Serial.println(foo);
+    
+    xEsc.write(x);
+    yEsc.write(y);
+
+    vTaskDelay(1);
+  }
+}
+
+void getCommandCode(void * pvParameters) { 
+  while(true) {
+    /* future note to anyone who actually reads this... I ran into a problem where my app sending bt commands was sending them faster then 
+      the tinypico could process them, it was causing the tinypico to constantly crash and restart.  I added a 10 ms delay in my code that was sending
+      commands, that seemed to have fixed it.  I think.... 
+    */
+    //delay(10);
+
+    if(SerialBT.available()) {
+      //Serial.println("Serial bt is avaiable");
+      command = SerialBT.readStringUntil('}');
+      //command = SerialBT.readString();
+      command.concat("}");
+
+      //Serial.println(command);
+
+      DeserializationError error = deserializeJson(doc, command);
+
+      // Test if parsing succeeds.
+      if (error) {
+        Serial.print(F("deserializeJson() failed: "));
+        Serial.println(error.f_str());
+        
+        return;
+      }
+
+      x = doc["X"];
+      y = doc["Y"];
+      spinney = doc["Spinney"];
+      int adjustment = doc["AdjustmentFactor"];
+
+      if(adjustment > 0) {
+        ADJUSTMENT_FACTOR += .01;
+
+        String foo = "New adjustment factor:";
+        foo.concat(ADJUSTMENT_FACTOR);
+        Serial.println(foo);
+        bluetoothPrintLine(foo);
+      }
+      if(adjustment < 0) {
+        ADJUSTMENT_FACTOR -= .01;
+        
+        String foo = "New adjustment factor:";
+        foo.concat(ADJUSTMENT_FACTOR);
+        Serial.println(foo);
+        bluetoothPrintLine(foo);
+      }
+
+      String foo = "x:";
+      foo.concat(x);
+      foo.concat(", y:");
+      foo.concat(y);
+      foo.concat(", spinney:");
+      foo.concat(spinney);
+
+      //Serial.println(foo);
+
+      command = "";
+      lastCommand = millis();
+    }
+    vTaskDelay(1);
+  }
+}
+
+void calcuateBySpeed(void * pvParameters) {
+  while(true) {    
+    // calculate how long it'll take to do one rotation
+    float timeToRotate = 0;
+    if(currentRotationSpeed != 0) {
+      timeToRotate = 360/currentRotationSpeed; // this takes X deg/ms and figures out how many ms it takes to do 360degs
+    }
+
+    // check if we've hit our rotation mark
+    if(millis() >= nextRotation) {
+      // update next rotate based on current rpm
+      nextRotation = nextRotation + timeToRotate; // bump target by current revolution time    
+    }
+    vTaskDelay(1);
+  }
+}
+
+void currentRotationTaskHandlerCode(void * pvParameters) {
+  while(true) {
     sensors_event_t event;
     accel.getEvent(&event);
     
@@ -186,8 +267,8 @@ void currentRotationTaskHandlerCode(void * pvParameters) {
     int adjustmentFactor = 3;
     double calculatedRPM = sqrt(estimated_value / ((CHIP_OFFSET) * 1.118)) * 100 * ADJUSTMENT_FACTOR;  
 
-    Serial.println(calculatedRPM);
-    bluetoothPrintLine(String(calculatedRPM, 3));  
+    //Serial.println(calculatedRPM);
+    //bluetoothPrintLine(String(calculatedRPM, 3));  
 
     if(isnan(calculatedRPM)) {
       calculatedRPM = 0;
@@ -196,17 +277,31 @@ void currentRotationTaskHandlerCode(void * pvParameters) {
     // convert rpm to deg/sec
     float degreesPerSecond = calculatedRPM * 360/60;
     currentRotationSpeed = degreesPerSecond / 1000;// return as degress per millisecond  
+
+    String foo = "";
+    foo.concat(currentRotationSpeed);    
+    foo.concat(":");
+    foo.concat(xPortGetCoreID());
+
+    //Serial.println(foo);
+    vTaskDelay(1);
   }
 }
 
 void ledTaskHandlerCode(void * pvParameters) {
-  for(;;) {
+  while(true) {
+    String foo = "led core:";
+    foo.concat(xPortGetCoreID());
+    //Serial.println(foo);
+
     if(abs(millis()-nextRotation) < 10) {
       tp.DotStar_SetPixelColor( 0, 255, 255 );
+      //Serial.println("lighting led");
     }
     else {
       tp.DotStar_SetPixelColor( 0, 0, 0 );
     }
+    vTaskDelay(1);
   }
 }
 
