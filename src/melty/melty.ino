@@ -4,7 +4,7 @@
 #include <ESP32Servo.h>
 #include <BluetoothSerial.h>
 #include <ArduinoJson.h>
-#include "arduino_secrets.h"
+//#include "arduino_secrets.h"
 
 #define CHIP_OFFSET 50 
 //#define ADJUSTMENT_FACTOR 4.08
@@ -30,6 +30,8 @@ long lastCommand;
 
 int x = 90;
 int y = 90;
+int heading = 0;
+int magnitude = 0;
 int spinney = 0;
 int failSafeTimeout = 1000;
 float currentRotationSpeed = 0;
@@ -167,6 +169,40 @@ void updateMotorsCode(void * pvParameters) {
     foo.concat(y);
 
     //Serial.println(foo);
+
+    if(spinney > 0) {
+      String foo = "magnitude: ";
+      foo.concat(magnitude);
+      bluetoothPrintLine(foo);
+      
+      // start spin to win!
+      float multiplier = 90 * spinney/100;      
+      x = 90 + multiplier;
+      y = 90 - multiplier;
+
+      // now look to see if we need to translate
+      if(magnitude > 0) {
+        // check our heading
+        int currentHeading = 0;
+        
+        // current speed in degs/ms, last rotation, from time elasped we should be able to tell where in the rotation we are
+        float elasped = nextRotation - millis();
+        currentHeading = (int)(elasped*currentRotationSpeed); // rotation speed is deg/ms, so this should give us degrees since our last rotation
+
+        currentHeading = currentHeading % 360;
+
+        // turn off x if we're in the right spot.  We'll want to turn off the motor at +90 degree from our target heading   
+        if(abs(heading+90 - currentHeading) < magnitude) {
+          x = 90;
+        }
+        String bar =  "currentHeading:";
+        bar.concat(currentHeading);
+        bar.concat(", heading: ");
+        bar.concat(heading);
+
+        bluetoothPrintLine(bar);        
+      }      
+    }    
     
     xEsc.write(x);
     yEsc.write(y);
@@ -203,6 +239,8 @@ void getCommandCode(void * pvParameters) {
 
       x = doc["X"];
       y = doc["Y"];
+      heading = doc["Heading"];
+      magnitude = doc["Magnitude"];   
       spinney = doc["Spinney"];
       int adjustment = doc["AdjustmentFactor"];
 
