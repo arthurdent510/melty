@@ -11,6 +11,7 @@
 #define X_MOTOR_PIN 14
 #define Y_MOTOR_PIN 15
 #define WRITE_TO_SERIAL false
+#define LED_PIN 4
 
 TaskHandle_t currentRotationTaskHandler;
 TaskHandle_t ledTaskHandler;
@@ -48,6 +49,8 @@ StaticJsonDocument<200> doc;
 void setup() {
   SerialBT.begin("PGGB");
   Serial.begin(115200);
+  
+  pinMode(LED_PIN, OUTPUT);
   
   if(!accel.begin())
   {
@@ -335,9 +338,11 @@ void ledTaskHandlerCode(void * pvParameters) {
     if(abs(millis()-nextRotation) < 10) {
       tp.DotStar_SetPixelColor( 0, 255, 255 );
       //Serial.println("lighting led");
+	  digitalWrite(LED_PIN, HIGH);
     }
     else {
       tp.DotStar_SetPixelColor( 0, 0, 0 );
+	  digitalWrite(LED_PIN, LOW);
     }
     vTaskDelay(1);
   }
